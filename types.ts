@@ -9,7 +9,13 @@ export enum InsuranceType {
 }
 
 export type InquiryType = 'General' | 'Quote' | 'Payment' | 'Claim' | 'Technical' | 'Feedback';
-export type UserStatus = 'Active' | 'Blocked' | 'Suspended';
+export type UserStatus = 'Active' | 'Frozen' | 'Blocked' | 'Deleted';
+export type KYCStatus = 'Verified' | 'Pending' | 'Failed';
+export type RiskLevel = 'Standard' | 'High Risk' | 'Suspicious';
+export type AdminRole = 'Super Admin' | 'Admin' | 'Support Staff';
+export type PolicyStatus = 'Active' | 'Frozen' | 'Cancelled' | 'Terminated' | 'Expired' | 'Renewed';
+export type ClaimStatus = 'Received' | 'Under Review' | 'Approved' | 'Rejected' | 'Documents Requested';
+export type BillingStatus = 'Paid in Full' | 'Payment Successful' | 'Pending' | 'Failed' | 'Disputed' | 'Refunded' | 'Overdue' | 'Chargeback Alert';
 
 export interface ContactMessage {
   id: string;
@@ -30,7 +36,10 @@ export interface User {
   email: string;
   phone?: string;
   role: 'customer' | 'admin';
+  adminRole?: AdminRole;
   status: UserStatus;
+  kycStatus?: KYCStatus;
+  riskLevel?: RiskLevel;
   createdAt: string;
   lastLogin?: string;
   lastIp?: string;
@@ -38,44 +47,59 @@ export interface User {
   isLocked?: boolean;
 }
 
+export interface Claim {
+  id: string;
+  policyId: string;
+  userId: string;
+  customerName: string;
+  dateReported: string;
+  incidentDate: string;
+  type: string;
+  description: string;
+  status: ClaimStatus;
+  isSuspicious: boolean;
+  internalNotes: string[];
+}
+
 export interface AuditLog {
   id: string;
   timestamp: string;
-  userId: string; // The person who performed the action
-  userEmail: string;
-  targetUserId?: string; // The person the action was performed on
+  adminId: string; 
+  adminEmail: string;
+  targetId: string;
   action: string;
   details: string;
+  reason?: string;
   ipAddress: string;
 }
 
-export interface DownloadRecord {
+export interface PolicyRecord {
   id: string;
-  timestamp: string;
   userId: string;
-  policyId: string;
-  fileName: string;
+  customerName: string;
+  type: string;
+  premium: string;
+  status: PolicyStatus;
+  vrm: string;
+  make: string;
+  model: string;
+  renewalDate: string;
+  details: any;
+  internalNotes?: string[];
 }
 
 export interface PaymentRecord {
   id: string;
   policyId: string;
   userId: string;
+  customerName: string;
   date: string;
   description: string;
   amount: string;
-  type: 'Full Payment' | 'Monthly Installment';
-  status: 'Paid in Full' | 'Payment Successful' | 'Pending' | 'Direct Republic Set Up';
+  type: 'Full Payment' | 'Monthly Installment' | 'Refund';
+  status: BillingStatus;
   method: string;
   reference: string;
-  bankTransactionId?: string;
-  planDetails?: {
-    totalPremium: string;
-    installmentsRemaining: number;
-    nextPaymentDate: string;
-    apr: string;
-    schedule: Array<{ date: string; amount: string; status: string }>;
-  };
   policyDetails: {
     vrm: string;
     make: string;
@@ -83,6 +107,18 @@ export interface PaymentRecord {
     coverLevel: string;
     insurer: string;
     renewalDate: string;
+  };
+  // Added planDetails to support monthly installment schedules and fix type errors
+  planDetails?: {
+    totalPremium: string;
+    installmentsRemaining: number;
+    nextPaymentDate: string;
+    apr: string;
+    schedule: {
+      date: string;
+      amount: string;
+      status: string;
+    }[];
   };
 }
 

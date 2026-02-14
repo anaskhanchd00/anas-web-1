@@ -1,32 +1,34 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User, AuditLog, DownloadRecord, ContactMessage, InquiryType, UserStatus } from '../types';
+import { 
+  User, AuditLog, ContactMessage, UserStatus, 
+  AdminRole, PolicyRecord, Claim, PaymentRecord, ClaimStatus, 
+  PolicyStatus, KYCStatus, RiskLevel, BillingStatus 
+} from '../types';
 
-// Strict definition of authorized administrators
-const AUTHORIZED_ADMINS = [
-  'master.admin@swiftpolicy.co.uk',
-  'security.lead@swiftpolicy.co.uk'
-];
+const SUPER_ADMINS = ['admin@swiftpolicy.co.uk', 'master.admin@swiftpolicy.co.uk'];
 
 interface AuthContextType {
   user: User | null;
   login: (email: string, pass: string) => Promise<{ success: boolean; message: string }>;
   signup: (name: string, email: string, pass: string) => Promise<boolean>;
   logout: () => void;
-  requestPasswordReset: (email: string) => Promise<boolean>;
-  resetPasswordWithToken: (token: string, newPass: string) => Promise<boolean>;
-  updateProfile: (name: string, email: string, phone: string) => Promise<boolean>;
-  updatePassword: (oldPass: string, newPass: string) => Promise<{ success: boolean; message: string }>;
-  logDownload: (policyId: string, fileName: string) => void;
-  submitInquiry: (data: Omit<ContactMessage, 'id' | 'timestamp' | 'status'>) => Promise<boolean>;
-  updateInquiryStatus: (id: string, status: ContactMessage['status']) => void;
-  getInquiries: () => ContactMessage[];
   getAuditLogs: () => AuditLog[];
-  getDownloadHistory: () => DownloadRecord[];
   getAllUsers: () => User[];
-  updateUserStatus: (userId: string, status: UserStatus) => void;
-  deleteUser: (userId: string) => void;
-  bulkUpdateUsers: (userIds: string[], action: 'Block' | 'Suspend' | 'Activate' | 'Delete') => void;
+  updateUserStatus: (userId: string, status: UserStatus, reason: string) => void;
+  updateUserKYC: (userId: string, status: KYCStatus, reason: string) => void;
+  updateUserRisk: (userId: string, level: RiskLevel, reason: string) => void;
+  deleteUser: (userId: string, reason: string) => void;
+  getAllPolicies: () => PolicyRecord[];
+  updatePolicyStatus: (id: string, status: PolicyStatus, reason: string) => void;
+  updatePolicyDetails: (id: string, updates: Partial<PolicyRecord>, reason: string) => void;
+  getAllClaims: () => Claim[];
+  updateClaimStatus: (id: string, status: ClaimStatus, note: string, isSuspicious?: boolean) => void;
+  getAllPayments: () => PaymentRecord[];
+  updatePaymentStatus: (id: string, status: BillingStatus, reason: string) => void;
+  submitInquiry: (data: any) => Promise<boolean>;
+  getInquiries: () => ContactMessage[];
+  updateInquiryStatus: (id: string, status: any) => void;
   isLoading: boolean;
 }
 
@@ -37,185 +39,178 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const savedUser = localStorage.getItem('sp_session');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
+    // Initialize Master Admin if not exists
+    const users = JSON.parse(localStorage.getItem('sp_users') || '[]');
+    if (!users.find((u: any) => u.email === 'admin@swiftpolicy.co.uk')) {
+      users.push({
+        id: 'SA-001',
+        name: 'Master Admin',
+        email: 'admin@swiftpolicy.co.uk',
+        password: 'AdminPassword123!',
+        role: 'admin',
+        adminRole: 'Super Admin',
+        status: 'Active',
+        kycStatus: 'Verified',
+        riskLevel: 'Standard',
+        createdAt: new Date().toISOString()
+      });
+      localStorage.setItem('sp_users', JSON.stringify(users));
     }
+    const savedUser = localStorage.getItem('sp_session');
+    if (savedUser) setUser(JSON.parse(savedUser));
     setIsLoading(false);
   }, []);
 
-  const addAuditLog = (action: string, details: string, targetUserId?: string) => {
+  const addAuditLog = (action: string, targetId: string, details: string, reason?: string) => {
     const logs: AuditLog[] = JSON.parse(localStorage.getItem('sp_audit_logs') || '[]');
-    const newLog: AuditLog = {
-      id: Math.random().toString(36).substr(2, 9),
+    logs.unshift({
+      id: `LOG-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
       timestamp: new Date().toISOString(),
-      userId: user?.id || 'SYSTEM',
-      userEmail: user?.email || 'System Account',
-      targetUserId,
+      adminId: user?.id || 'SYSTEM',
+      adminEmail: user?.email || 'System Engine',
+      targetId,
       action,
       details,
-      ipAddress: '82.16.24.102' // Simulated IP for local demonstration
-    };
-    logs.unshift(newLog);
-    localStorage.setItem('sp_audit_logs', JSON.stringify(logs.slice(0, 100)));
-  };
-
-  const simulateNotification = (email: string, status: UserStatus) => {
-    console.log(`%c[OUTGOING SMTP] Target: ${email}`, "color: #e91e8c; font-weight: bold;");
-    console.log(`%c[OUTGOING SMTP] Subject: Important Update Regarding Your SwiftPolicy Account`, "color: #e91e8c;");
-    console.log(`%c[OUTGOING SMTP] Body: Hello, your account status has been changed to ${status.toUpperCase()}.`, "color: #e91e8c;");
-  };
-
-  const updateUserStatus = (userId: string, status: UserStatus) => {
-    const users = JSON.parse(localStorage.getItem('sp_users') || '[]');
-    const idx = users.findIndex((u: any) => u.id === userId);
-    if (idx !== -1) {
-      const targetUser = users[idx];
-      const oldStatus = targetUser.status || 'Active';
-      targetUser.status = status;
-      targetUser.isLocked = status === 'Blocked';
-      localStorage.setItem('sp_users', JSON.stringify(users));
-      
-      // Explicit Audit Logging with Admin ID and Target Client ID
-      addAuditLog('ADMIN_OVERRIDE', `Status modification for ${targetUser.email} (Ref: ${targetUser.id}): ${oldStatus} -> ${status}`, userId);
-      
-      simulateNotification(targetUser.email, status);
-      
-      if (user?.id === userId && status !== 'Active') {
-        logout();
-      }
-    }
-  };
-
-  const deleteUser = (userId: string) => {
-    const users = JSON.parse(localStorage.getItem('sp_users') || '[]');
-    const targetUser = users.find((u: any) => u.id === userId);
-    if (!targetUser) return;
-
-    const filtered = users.filter((u: any) => u.id !== userId);
-    localStorage.setItem('sp_users', JSON.stringify(filtered));
-    
-    // Explicit Audit Logging for Account Purge
-    addAuditLog('ADMIN_PURGE', `Permanent deletion of account record: ${targetUser.email} (Ref: ${targetUser.id})`, userId);
-
-    const policies = JSON.parse(localStorage.getItem('sp_client_data') || '[]');
-    localStorage.setItem('sp_client_data', JSON.stringify(policies.filter((p: any) => p.userId !== userId)));
-  };
-
-  const bulkUpdateUsers = (userIds: string[], action: 'Block' | 'Suspend' | 'Activate' | 'Delete') => {
-    userIds.forEach(id => {
-      if (action === 'Delete') deleteUser(id);
-      else updateUserStatus(id, action === 'Activate' ? 'Active' : action as UserStatus);
+      reason,
+      ipAddress: '82.16.24.102'
     });
-    addAuditLog('ADMIN_BULK_ACTION', `Applied global ${action} command to ${userIds.length} target records`);
+    localStorage.setItem('sp_audit_logs', JSON.stringify(logs.slice(0, 1000)));
   };
 
   const login = async (email: string, pass: string) => {
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 800));
     const users = JSON.parse(localStorage.getItem('sp_users') || '[]');
     const normalizedEmail = email.toLowerCase();
-    const userIndex = users.findIndex((u: any) => u.email.toLowerCase() === normalizedEmail);
+    const found = users.find((u: any) => u.email.toLowerCase() === normalizedEmail);
     
-    if (userIndex === -1) {
-      addAuditLog('AUTH_FAILURE', `Invalid identity login attempted: ${normalizedEmail}`);
-      return { success: false, message: 'Invalid credentials.' };
-    }
+    if (!found || found.password !== pass) return { success: false, message: 'Invalid credentials.' };
+    if (found.status === 'Blocked') return { success: false, message: 'Account blocked for compliance violations.' };
+    if (found.status === 'Deleted') return { success: false, message: 'Identity record not found.' };
+
+    const isAdmin = SUPER_ADMINS.includes(normalizedEmail) || found.role === 'admin';
+    const safeUser = { ...found, role: isAdmin ? 'admin' : 'customer' };
+    delete safeUser.password;
     
-    const found = users[userIndex];
-
-    if (found.status === 'Blocked' || found.isLocked) {
-      addAuditLog('AUTH_BLOCKED', `Access denied for blacklisted entrant: ${normalizedEmail}`);
-      return { success: false, message: 'This account has been administratively blocked.' };
-    }
-
-    if (found.password === pass) {
-      const isAdmin = AUTHORIZED_ADMINS.includes(normalizedEmail);
-      const now = new Date().toISOString();
-      const loginIp = '82.16.24.102'; // Simulated
-
-      // Update vehicle database with login metadata
-      users[userIndex].lastLogin = now;
-      users[userIndex].lastIp = loginIp;
-      localStorage.setItem('sp_users', JSON.stringify(users));
-      
-      const sessionUser: User = { 
-        id: found.id, 
-        name: found.name, 
-        email: found.email, 
-        phone: found.phone,
-        role: isAdmin ? 'admin' : 'customer',
-        status: found.status || 'Active',
-        createdAt: found.createdAt || now,
-        lastLogin: now,
-        lastIp: loginIp
-      };
-      
-      setUser(sessionUser);
-      localStorage.setItem('sp_session', JSON.stringify(sessionUser));
-      addAuditLog('AUTH_SUCCESS', `Session initiated for ${normalizedEmail} (Role: ${sessionUser.role.toUpperCase()})`);
-      return { success: true, message: 'Access granted.' };
-    } else {
-      addAuditLog('AUTH_FAILURE', `Incorrect access key submitted for: ${normalizedEmail}`);
-      return { success: false, message: 'Invalid credentials.' };
-    }
+    setUser(safeUser);
+    localStorage.setItem('sp_session', JSON.stringify(safeUser));
+    addAuditLog('LOGIN_SUCCESS', found.id, `Session initiated as ${safeUser.role}`);
+    return { success: true, message: 'Access authorized.' };
   };
 
   const signup = async (name: string, email: string, pass: string) => {
-    await new Promise(r => setTimeout(r, 1000));
     const users = JSON.parse(localStorage.getItem('sp_users') || '[]');
-    const normalizedEmail = email.toLowerCase();
-    if (users.find((u: any) => u.email.toLowerCase() === normalizedEmail)) return false;
-
-    const newUser: User = { 
-      id: Math.random().toString(36).substr(2, 9), 
-      name, 
-      email: normalizedEmail, 
-      role: 'customer',
-      status: 'Active',
-      createdAt: new Date().toISOString(),
-      failedLoginAttempts: 0,
-      isLocked: false
-    };
-    users.push({ ...newUser, password: pass });
+    if (users.find((u: any) => u.email === email.toLowerCase())) return false;
+    const id = Math.random().toString(36).substr(2, 9);
+    const newUser = { id, name, email: email.toLowerCase(), password: pass, role: 'customer', status: 'Active', createdAt: new Date().toISOString() };
+    users.push(newUser);
     localStorage.setItem('sp_users', JSON.stringify(users));
-
-    setUser(newUser);
-    localStorage.setItem('sp_session', JSON.stringify(newUser));
-    addAuditLog('REGISTRATION_SUCCESS', `New system enrollment: ${normalizedEmail}`);
+    const { password, ...safe } = newUser;
+    setUser(safe as any);
+    localStorage.setItem('sp_session', JSON.stringify(safe));
     return true;
   };
 
-  const logout = () => {
-    addAuditLog('AUTH_LOGOUT', `Manual session termination`);
-    setUser(null);
-    localStorage.removeItem('sp_session');
+  const logout = () => { setUser(null); localStorage.removeItem('sp_session'); };
+
+  const updateUserStatus = (userId: string, status: UserStatus, reason: string) => {
+    const users = JSON.parse(localStorage.getItem('sp_users') || '[]');
+    const idx = users.findIndex((u: any) => u.id === userId);
+    if (idx !== -1) {
+      const old = users[idx].status;
+      users[idx].status = status;
+      users[idx].isLocked = status === 'Blocked';
+      localStorage.setItem('sp_users', JSON.stringify(users));
+      addAuditLog('USER_STATUS_CHANGE', userId, `Transition from ${old} to ${status}`, reason);
+    }
   };
 
-  // Remaining helper functions
-  const requestPasswordReset = async (email: string) => { /* ... */ return true; };
-  const resetPasswordWithToken = async (token: string, newPass: string) => { /* ... */ return true; };
-  const updateProfile = async (name: string, email: string, phone: string) => { /* ... */ return true; };
-  const updatePassword = async (oldPass: string, newPass: string) => { /* ... */ return {success: true, message: ''}; };
-  const logDownload = (policyId: string, fileName: string) => { /* ... */ };
-  const submitInquiry = async (data: any) => { /* ... */ return true; };
-  const updateInquiryStatus = (id: string, status: any) => { /* ... */ };
-  const getInquiries = () => JSON.parse(localStorage.getItem('sp_contact_messages') || '[]');
-  const getAuditLogs = () => JSON.parse(localStorage.getItem('sp_audit_logs') || '[]');
-  const getDownloadHistory = () => JSON.parse(localStorage.getItem('sp_download_history') || '[]');
-  const getAllUsers = () => {
-    const raw = JSON.parse(localStorage.getItem('sp_users') || '[]');
-    return raw.map((u: any) => {
-      const { password, ...safeUser } = u;
-      return safeUser as User;
-    });
+  const deleteUser = (userId: string, reason: string) => {
+    const users = JSON.parse(localStorage.getItem('sp_users') || '[]');
+    const idx = users.findIndex((u: any) => u.id === userId);
+    if (idx !== -1) {
+      users[idx].status = 'Deleted';
+      users[idx].name = 'Purged Record';
+      users[idx].email = `deleted_${userId}@swiftpolicy.co.uk`;
+      localStorage.setItem('sp_users', JSON.stringify(users));
+      addAuditLog('IDENTITY_PURGE', userId, 'Full identity anonymization', reason);
+    }
   };
+
+  const updatePolicyStatus = (id: string, status: PolicyStatus, reason: string) => {
+    const policies = JSON.parse(localStorage.getItem('sp_client_data') || '[]');
+    const idx = policies.findIndex((p: any) => p.id === id);
+    if (idx !== -1) {
+      const old = policies[idx].status;
+      policies[idx].status = status;
+      if (status === 'Renewed') {
+        const d = new Date(policies[idx].renewalDate || policies[idx].details.renewalDate);
+        d.setFullYear(d.getFullYear() + 1);
+        policies[idx].renewalDate = d.toISOString();
+        policies[idx].status = 'Active';
+      }
+      localStorage.setItem('sp_client_data', JSON.stringify(policies));
+      addAuditLog('POLICY_LIFECYCLE_CHANGE', id, `${old} -> ${status}`, reason);
+    }
+  };
+
+  const updatePolicyDetails = (id: string, updates: any, reason: string) => {
+    const policies = JSON.parse(localStorage.getItem('sp_client_data') || '[]');
+    const idx = policies.findIndex((p: any) => p.id === id);
+    if (idx !== -1) {
+      policies[idx] = { ...policies[idx], ...updates };
+      localStorage.setItem('sp_client_data', JSON.stringify(policies));
+      addAuditLog('POLICY_DETAIL_CORRECTION', id, 'Metadata manually corrected', reason);
+    }
+  };
+
+  const updateClaimStatus = (id: string, status: ClaimStatus, note: string, isSuspicious?: boolean) => {
+    const claims = JSON.parse(localStorage.getItem('sp_claims') || '[]');
+    const idx = claims.findIndex((c: any) => c.id === id);
+    if (idx !== -1) {
+      claims[idx].status = status;
+      if (isSuspicious !== undefined) claims[idx].isSuspicious = isSuspicious;
+      if (note) claims[idx].internalNotes = [...(claims[idx].internalNotes || []), note];
+      localStorage.setItem('sp_claims', JSON.stringify(claims));
+      addAuditLog('CLAIM_ADJUDICATION', id, `Set to ${status}`, note);
+    }
+  };
+
+  const updatePaymentStatus = (id: string, status: BillingStatus, reason: string) => {
+    const payments = JSON.parse(localStorage.getItem('sp_payment_data') || '[]');
+    const idx = payments.findIndex((p: any) => p.id === id);
+    if (idx !== -1) {
+      payments[idx].status = status;
+      localStorage.setItem('sp_payment_data', JSON.stringify(payments));
+      addAuditLog('FINANCIAL_STATUS_MOD', id, `Marked as ${status}`, reason);
+    }
+  };
+
+  const getAllUsers = () => JSON.parse(localStorage.getItem('sp_users') || '[]').filter((u: any) => u.role === 'customer' && u.status !== 'Deleted');
+  const getAllPolicies = () => JSON.parse(localStorage.getItem('sp_client_data') || '[]').map((p: any) => ({ ...p, vrm: p.details.vrm, make: p.details.make, model: p.details.model, renewalDate: p.renewalDate || p.details.renewalDate, customerName: p.customerName || (p.details.firstName + ' ' + p.details.lastName) }));
+  const getAllClaims = () => JSON.parse(localStorage.getItem('sp_claims') || '[]');
+  const getAllPayments = () => JSON.parse(localStorage.getItem('sp_payment_data') || '[]');
+  const getAuditLogs = () => JSON.parse(localStorage.getItem('sp_audit_logs') || '[]');
+  const submitInquiry = async (d: any) => {
+    const msgs = JSON.parse(localStorage.getItem('sp_contact_messages') || '[]');
+    msgs.unshift({ ...d, id: `MSG-${Math.random().toString(36).substr(2, 6).toUpperCase()}`, timestamp: new Date().toISOString(), status: 'Unread' });
+    localStorage.setItem('sp_contact_messages', JSON.stringify(msgs));
+    return true;
+  };
+  const getInquiries = () => JSON.parse(localStorage.getItem('sp_contact_messages') || '[]');
+  const updateInquiryStatus = (id: string, s: any) => {
+    const msgs = JSON.parse(localStorage.getItem('sp_contact_messages') || '[]');
+    const idx = msgs.findIndex((m: any) => m.id === id);
+    if (idx !== -1) { msgs[idx].status = s; localStorage.setItem('sp_contact_messages', JSON.stringify(msgs)); }
+  };
+  const updateUserKYC = (u: string, s: any, r: string) => { /* logic */ };
+  const updateUserRisk = (u: string, l: any, r: string) => { /* logic */ };
 
   return (
     <AuthContext.Provider value={{ 
-      user, login, signup, logout, requestPasswordReset, resetPasswordWithToken, 
-      updateProfile, updatePassword, logDownload, getAuditLogs, 
-      getDownloadHistory, getAllUsers, submitInquiry, getInquiries, updateInquiryStatus,
-      updateUserStatus, deleteUser, bulkUpdateUsers, isLoading 
+      user, login, signup, logout, getAuditLogs, getAllUsers, updateUserStatus, 
+      updateUserKYC, updateUserRisk, deleteUser, getAllPolicies, updatePolicyStatus, 
+      updatePolicyDetails, getAllClaims, updateClaimStatus, getAllPayments, updatePaymentStatus,
+      isLoading, submitInquiry, getInquiries, updateInquiryStatus
     }}>
       {children}
     </AuthContext.Provider>

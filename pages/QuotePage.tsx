@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
@@ -155,10 +156,12 @@ const QuotePage: React.FC = () => {
       ? `£${finalQuote}.00` 
       : `£${Math.round(((finalQuote! * 1.1) / 12) * 100) / 100}`;
     
+    // Fixed: Added missing customerName and planDetails (updated interface in types.ts)
     const payment: PaymentRecord = {
       id: paymentId,
       policyId: policyId,
       userId: currentUser!.id,
+      customerName: currentUser!.name,
       date: now.toISOString(),
       description: paymentPlan === 'full' ? `FULL POLICY PAYMENT - ${policyId}` : `INITIAL PREMIUM DEPOSIT - ${policyId}`,
       amount: amountStr,
